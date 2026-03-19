@@ -1,68 +1,49 @@
 # Big Data Engineering Final Project - DEAI 2026
 
-This project implements data ingestion of NYC taxi trip data into MinIO and a Spark read-from-S3 ingestion pipeline.
+This repository contains a complete NYC taxi data ingestion pipeline:
+- Download Yellow Taxi Parquet data
+- Upload to MinIO S3
+- Read from MinIO using Spark with S3A
 
-## Goals implemented
+## Files
+- `data-ingestion.py`: end-to-end ingestion script (download, upload, Spark read)
+- `docker-compose.yml`: local stack with MinIO, Spark master/worker, and FastAPI API service
 
-1. Download raw dataset in Parquet format
-2. Upload raw parquet data to MinIO bucket `taxi/raw`
-3. Read raw data from S3 using Spark (`s3a://`) and write processed parquet to `taxi/processed`
-
-## Setup
-
-1. Start containers:
-
+## Quick Start
+1. Start Docker stack:
 ```bash
 docker compose up -d
 ```
-
-2. Install Python (from host) dependencies:
-
+2. Run ingestion script:
 ```bash
-python3 -m pip install -r ingest/requirements.txt
+python3 data-ingestion.py
 ```
 
-## Run raw ingestion (download + upload)
+## What it does
+1. Downloads `yellow_tripdata_2024-01.parquet` to `/tmp/yellow_tripdata_2024-01.parquet`.
+2. Uploads to MinIO bucket `nyc-tlc` at key `raw/yellow_tripdata.parquet`.
+3. Starts a local Spark session and reads from `s3a://nyc-tlc/raw/yellow_tripdata.parquet`.
+4. Prints schema, row count, and sample rows.
 
+## MinIO access
+- UI: http://localhost:9001
+- Console credentials: `minioadmin` / `minioadmin`
+- S3 endpoint: http://localhost:9000
+
+## Running from Spark image (optional)
+If you want to run Spark using the Docker Spark image instead of local Spark from Python environment, use Spark submit with dependencies for S3A:
 ```bash
-python3 ingest/download_and_upload.py \
-  --url https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2024-01.parquet \
-  --local-dir ./data/raw \
-  --bucket taxi \
-  --key raw/yellow_tripdata.parquet \
-  --endpoint http://localhost:9000 \
-  --access-key minioadmin \
-  --secret-key minioadmin
+/opt/spark/bin/spark-submit \
+  --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
+  data-ingestion.py
 ```
 
-Confirm object exists by listing with MinIO mc (optional):
-
+## Validate output
+After ingestion completes, confirm file exists in MinIO:
 ```bash
-docker compose exec minio-init sh -c 'mc alias set local http://minio:9000 minioadmin minioadmin && mc ls local/taxi/raw'
-```
-
-## Run Spark ingestion reading from S3
-
-Spark reads directly from MinIO via s3a:
-
-```bash
-python3 ingest/spark_read_s3.py
-```
-
-If you want to run with Spark submit and explicit packages:
-
-```bash
-/opt/spark/bin/spark-submit --packages org.apache.hadoop:hadoop-aws:3.3.5 ingest/spark_read_s3.py
-```
-
-## Verify
-
-After Spark job, verify processed parquet in MinIO:
-
-```bash
-docker compose exec minio-init sh -c 'mc alias set local http://minio:9000 minioadmin minioadmin && mc ls local/taxi/processed'
+docker compose exec minio-init sh -c 'mc alias set local http://minio:9000 minioadmin minioadmin && mc ls local/nyc-tlc/raw'
 ```
 
 ## Notes
-- This pipeline stores the raw dataset in MinIO as parquet and reads it directly via Spark S3A.
-- If your MinIO is running on another host (docker or remote), update endpoint and credentials.
+- The script uses `pandas` and `pyspark`, so ensure your Python environment has dependencies installed.
+- Docker Compose brings up required services; keep them running while ingesting.

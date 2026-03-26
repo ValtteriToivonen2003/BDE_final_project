@@ -8,12 +8,24 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      retries: 5
 
   minio-init:
     image: minio/mc
     depends_on:
-      - minio
-    entrypoint: ["/bin/sh", "-c", "mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/taxi/raw && mc mb --ignore-existing local/taxi/processed"]
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 minioadmin minioadmin
+        mc mb --ignore-existing local/nyc-tlc/raw
+        mc mb --ignore-existing local/nyc-tlc/silver
+        mc mb --ignore-existing local/nyc-tlc/gold
 
   spark-master:
     image: apache/spark:3.5.3
@@ -26,13 +38,23 @@ services:
     image: apache/spark:3.5.3
     depends_on:
       - spark-master
-    command: ["/bin/bash", "-c", "/opt/spark/bin/sbin/start-worker.sh spark://spark-master:7077 && tail -f /dev/null"]
+    command:
+      - /bin/bash
+      - -c
+      - /opt/spark/bin/sbin/start-worker.sh spark://spark-master:7077 && tail -f /dev/null
 
   api:
-    image: tiangolo/uvicorn-gunicorn-fastapi:python3.11
+    build:
+      context: .
+      dockerfile: dockerfile.api
     ports:
       - "8000:8000"
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      BUCKET: nyc-tlc
     depends_on:
-      - minio
-      - spark-master
+      minio:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload

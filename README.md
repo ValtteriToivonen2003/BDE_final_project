@@ -7,16 +7,32 @@ This repository contains a complete NYC taxi data ingestion pipeline:
 
 ## Files
 - `data-ingestion.py`: end-to-end ingestion script (download, upload, Spark read)
+- `data-process.py`: Spark medallion pipeline (RAW → SILVER → GOLD data transformation)
+- `main.py`: FastAPI Analytics API server with analytical endpoints
+- `dockerfile.api`: Docker image for running FastAPI server
 - `docker-compose.yml`: local stack with MinIO, Spark master/worker, and FastAPI API service
+- `requirements.txt`: Python dependencies
 
 ## Quick Start
-1. Start Docker stack:
+1. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+2. Start Docker stack:
 ```bash
 docker compose up -d
 ```
-2. Run ingestion script:
+3. Run ingestion script:
 ```bash
 python3 data-ingestion.py
+```
+4. Run data processing pipeline:
+```bash
+python3 data-process.py
+```
+5. Run FastAPI Analytics API:
+```bash
+python3 -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ## What it does
@@ -44,6 +60,22 @@ After ingestion completes, confirm file exists in MinIO:
 docker compose exec minio-init sh -c 'mc alias set local http://minio:9000 minioadmin minioadmin && mc ls local/nyc-tlc/raw'
 ```
 
+## Analytics API Endpoints
+Available at `http://localhost:8000` when running:
+- `GET /api/v1/trips/hourly`: Hourly trip aggregations
+- `GET /api/v1/trips/summary`: Trip summary statistics
+- `GET /api/v1/drivers/leaderboard`: Top driver statistics
+- `GET /health`: Health check endpoint
+
+API documentation (Swagger): `http://localhost:8000/docs`
+
+## Data Processing Pipeline
+The `data-process.py` implements a medallion architecture:
+- **RAW**: Original Parquet files from MinIO
+- **SILVER**: Cleaned, typed, and deduplicated records
+- **GOLD**: Feature-engineered, aggregated analytical tables
+
 ## Notes
-- The script uses `pandas` and `pyspark`, so ensure your Python environment has dependencies installed.
-- Docker Compose brings up required services; keep them running while ingesting.
+- The scripts use `pandas` and `pyspark`, so ensure your Python environment has dependencies installed.
+- Docker Compose brings up required services; keep them running while ingesting and processing.
+- The FastAPI server reads from processed GOLD-layer Parquet data in MinIO.

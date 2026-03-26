@@ -5,6 +5,7 @@ Goal: Download raw dataset, convert to Parquet, upload to MinIO S3, and read wit
 """
 
 import os
+import time
 import requests
 import pandas as pd
 from io import BytesIO
@@ -24,39 +25,58 @@ MINIO_SECRET_KEY  = "minioadmin"                     # MinIO secret key
 BUCKET_NAME       = "nyc-tlc"                        # Target S3 bucket
 PARQUET_KEY       = "raw/yellow_tripdata.parquet"    # Object key inside bucket
 
-# NYC TLC dataset URL (Yellow Taxi - January 2024)
+# NYC TLC dataset URL (high volume taxi data - November 2025)
 DATA_URL = (
-    "https://d37ci6vzurychx.cloudfront.net/trip-data/"
-    "yellow_tripdata_2024-01.parquet"
+    "https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2025-11.parquet"
 )
 
-LOCAL_PARQUET_PATH = "/tmp/yellow_tripdata_2024-01.parquet"
+LOCAL_PARQUET_PATH = "/tmp/fhvhv_tripdata_2025-11.parquet"
 
 
 # ─────────────────────────────────────────────
 # STEP 1 – Download & store as Parquet
 # ─────────────────────────────────────────────
 
-def download_and_save_parquet(url: str, local_path: str) -> None:
+def download_and_save_parquet(url: str, local_path: str, retries: int = 3) -> None:
     """
-    Download the NYC TLC dataset. If it is already in Parquet format (as
-    provided by the TLC CDN) it is saved directly; otherwise it is converted.
+    Download the dataset with a retry loop and chunked writing to prevent corruption.
     """
     print(f"[1/3] Downloading dataset from:\n      {url}")
-    response = requests.get(url, stream=True, timeout=120)
-    response.raise_for_status()
+    
+    for attempt in range(retries):
+        try:
+            # Added a longer timeout and stream=True for large files
+            response = requests.get(url, stream=True, timeout=300)
+            response.raise_for_status()
 
-    # The TLC CDN now serves native Parquet files – write directly to disk.
-    with open(local_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
-            f.write(chunk)
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
 
-    size_mb = os.path.getsize(local_path) / (1024 ** 2)
-    print(f"    ✓ Saved to {local_path}  ({size_mb:.1f} MB)")
+            with open(local_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024): # 1MB chunks
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        # Print progress every 50MB so you know it hasn't frozen
+                        if downloaded % (50 * 1024 * 1024) < (1024 * 1024):
+                            print(f"    Progress: {downloaded / (1024**2):.1f} MB / {total_size / (1024**2):.1f} MB")
 
-    # Quick sanity-check: load with pandas and print schema
-    df = pd.read_parquet(local_path)
-    print(f"    ✓ Rows: {len(df):,}  |  Columns: {list(df.columns)}\n")
+            size_mb = os.path.getsize(local_path) / (1024 ** 2)
+            print(f"    ✓ Saved to {local_path} ({size_mb:.1f} MB)")
+            
+            # The Critical Sanity Check
+            df = pd.read_parquet(local_path)
+            print(f"    ✓ Data Verified. Rows: {len(df):,}\n")
+            return # Exit function if successful
+
+        except Exception as e:
+            print(f"    ⚠ Attempt {attempt + 1} failed: {e}")
+            if attempt < retries - 1:
+                print("    Retrying in 5 seconds...")
+                time.sleep(5)
+            else:
+                print("    Error: All download attempts failed.")
+                raise
 
 
 # ─────────────────────────────────────────────
@@ -107,17 +127,20 @@ def read_with_spark(bucket: str, key: str) -> None:
         .master("local[*]")
         # ── S3A / MinIO settings ──────────────────────────────────────────
         .config("spark.hadoop.fs.s3a.endpoint",               MINIO_ENDPOINT)
-        .config("spark.hadoop.fs.s3a.access.key",             MINIO_ACCESS_KEY)
-        .config("spark.hadoop.fs.s3a.secret.key",             MINIO_SECRET_KEY)
-        .config("spark.hadoop.fs.s3a.path.style.access",      "true")
-        .config("spark.hadoop.fs.s3a.impl",
-                "org.apache.hadoop.fs.s3a.S3AFileSystem")
-        .config("spark.hadoop.fs.s3a.aws.credentials.provider",
-                "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
-        # ── Required JARs (adjust versions to match your Hadoop/Spark build) ─
-        .config("spark.jars.packages",
-                "org.apache.hadoop:hadoop-aws:3.3.4,"
-                "com.amazonaws:aws-java-sdk-bundle:1.12.262")
+.config("spark.hadoop.fs.s3a.access.key",             MINIO_ACCESS_KEY)
+.config("spark.hadoop.fs.s3a.secret.key",             MINIO_SECRET_KEY)
+.config("spark.hadoop.fs.s3a.path.style.access",      "true")
+.config("spark.hadoop.fs.s3a.impl",
+        "org.apache.hadoop.fs.s3a.S3AFileSystem")
+.config("spark.hadoop.fs.s3a.aws.credentials.provider",
+        "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
+.config("spark.hadoop.fs.s3a.connection.timeout",           "60000")
+.config("spark.hadoop.fs.s3a.connection.establish.timeout", "60000")
+.config("spark.hadoop.fs.s3a.socket.timeout",               "60000")
+.config("spark.hadoop.fs.s3a.input.fadvise",               "sequential")
+.config("spark.jars.packages",
+        "org.apache.hadoop:hadoop-aws:3.4.1,"
+        "com.amazonaws:aws-java-sdk-bundle:1.12.367")
         .getOrCreate()
     )
 

@@ -1,14 +1,14 @@
 """
-Data Ingestion Pipeline - NYC TLC Trip Data
-============================================
-Goal: Download raw dataset, convert to Parquet, upload to MinIO S3, and read with Spark.
+Data Ingestion Pipeline - NYC TLC FHVHV Trip Data
+=================================================
+Goal: Download a High Volume For-Hire Vehicle Parquet dataset,
+upload it to MinIO S3, and read it with Spark.
 """
 
 import os
 import time
 import requests
 import pandas as pd
-from io import BytesIO
 import boto3
 from botocore.client import Config
 from pyspark.sql import SparkSession
@@ -19,18 +19,23 @@ from pyspark.sql import SparkSession
 # ─────────────────────────────────────────────
 
 # MinIO connection settings (adjust to your environment)
-MINIO_ENDPOINT    = "http://localhost:9000"          # MinIO server URL
-MINIO_ACCESS_KEY  = "minioadmin"                     # MinIO access key
-MINIO_SECRET_KEY  = "minioadmin"                     # MinIO secret key
-BUCKET_NAME       = "nyc-tlc"                        # Target S3 bucket
-PARQUET_KEY       = "raw/yellow_tripdata.parquet"    # Object key inside bucket
+MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+BUCKET_NAME = os.getenv("BUCKET_NAME", "nyc-tlc")
 
-# NYC TLC dataset URL (high volume taxi data - November 2025)
-DATA_URL = (
-    "https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2025-11.parquet"
+# NYC TLC High Volume For-Hire Vehicle Trip Records (PARQUET)
+DATASET_BASE_URL = os.getenv(
+    "DATASET_BASE_URL",
+    "https://d37ci6vzurychx.cloudfront.net/trip-data",
 )
+DATASET_PREFIX = os.getenv("DATASET_PREFIX", "fhvhv_tripdata")
+DATASET_MONTH = os.getenv("DATASET_MONTH", "2025-11")
+DATASET_FILENAME = f"{DATASET_PREFIX}_{DATASET_MONTH}.parquet"
+DATA_URL = f"{DATASET_BASE_URL}/{DATASET_FILENAME}"
 
-LOCAL_PARQUET_PATH = "/tmp/fhvhv_tripdata_2025-11.parquet"
+PARQUET_KEY = os.getenv("PARQUET_KEY", f"raw/{DATASET_FILENAME}")
+LOCAL_PARQUET_PATH = os.getenv("LOCAL_PARQUET_PATH", f"/tmp/{DATASET_FILENAME}")
 
 
 # ─────────────────────────────────────────────
@@ -41,7 +46,7 @@ def download_and_save_parquet(url: str, local_path: str, retries: int = 3) -> No
     """
     Download the dataset with a retry loop and chunked writing to prevent corruption.
     """
-    print(f"[1/3] Downloading dataset from:\n      {url}")
+    print(f"[1/3] Downloading FHVHV dataset from:\n      {url}")
     
     for attempt in range(retries):
         try:
@@ -123,7 +128,7 @@ def read_with_spark(bucket: str, key: str) -> None:
 
     spark = (
         SparkSession.builder
-        .appName("NYC-TLC-Ingestion")
+        .appName("NYC-TLC-FHVHV-Ingestion")
         .master("local[*]")
         # ── S3A / MinIO settings ──────────────────────────────────────────
         .config("spark.hadoop.fs.s3a.endpoint",               MINIO_ENDPOINT)
@@ -170,5 +175,5 @@ if __name__ == "__main__":
     upload_to_minio(LOCAL_PARQUET_PATH, BUCKET_NAME, PARQUET_KEY)
     read_with_spark(BUCKET_NAME, PARQUET_KEY)
     print("═" * 55)
-    print("  Data ingestion pipeline completed successfully.")
+    print("  FHVHV data ingestion pipeline completed successfully.")
     print("═" * 55)

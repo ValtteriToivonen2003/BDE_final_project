@@ -1,7 +1,7 @@
 # Big Data Engineering Final Project - DEAI 2026
 
-This repository contains a complete NYC taxi data ingestion pipeline:
-- Download Yellow Taxi Parquet data
+This repository contains a complete NYC TLC High Volume For-Hire Vehicle data pipeline:
+- Download FHVHV Parquet data
 - Upload to MinIO S3
 - Read from MinIO using Spark with S3A
 
@@ -35,11 +35,26 @@ python3 data-process.py
 python3 -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+The Docker stack creates the `nyc-tlc` bucket. The `raw`, `silver`, and `gold` paths appear only after the ingestion and processing scripts upload objects into those prefixes.
+
 ## What it does
-1. Downloads `yellow_tripdata_2024-01.parquet` to `/tmp/yellow_tripdata_2024-01.parquet`.
-2. Uploads to MinIO bucket `nyc-tlc` at key `raw/yellow_tripdata.parquet`.
-3. Starts a local Spark session and reads from `s3a://nyc-tlc/raw/yellow_tripdata.parquet`.
+1. Downloads an FHVHV monthly file such as `fhvhv_tripdata_2025-11.parquet` to `/tmp/fhvhv_tripdata_2025-11.parquet`.
+2. Uploads it to MinIO bucket `nyc-tlc` at key `raw/fhvhv_tripdata_2025-11.parquet`.
+3. Starts a local Spark session and reads from `s3a://nyc-tlc/raw/fhvhv_tripdata_2025-11.parquet`.
 4. Prints schema, row count, and sample rows.
+
+## Changing the source month
+The ingestion script defaults to the NYC TLC High Volume For-Hire Vehicle Trip Records Parquet feed. To switch months, set `DATASET_MONTH` when you run it:
+
+```bash
+DATASET_MONTH=2024-01 python3 data-ingestion.py
+```
+
+Optional overrides:
+- `DATASET_PREFIX` defaults to `fhvhv_tripdata`
+- `DATASET_BASE_URL` defaults to `https://d37ci6vzurychx.cloudfront.net/trip-data`
+- `PARQUET_KEY` defaults to `raw/<dataset filename>`
+- `LOCAL_PARQUET_PATH` defaults to `/tmp/<dataset filename>`
 
 ## MinIO access
 - UI: http://localhost:9001
@@ -59,6 +74,15 @@ After ingestion completes, confirm file exists in MinIO:
 ```bash
 docker compose exec minio-init sh -c 'mc alias set local http://minio:9000 minioadmin minioadmin && mc ls local/nyc-tlc/raw'
 ```
+
+## MinIO persistence
+MinIO data is now stored in a named Docker volume, so `docker compose down` followed by `docker compose up -d` keeps your bucket contents.
+
+If you run:
+```bash
+docker compose down -v
+```
+Docker removes the MinIO volume and all stored objects, so you must rerun ingestion and processing.
 
 ## Analytics API Endpoints
 Available at `http://localhost:8000` when running:
